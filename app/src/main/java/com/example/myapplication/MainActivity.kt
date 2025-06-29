@@ -147,17 +147,16 @@ private fun startVpn(
     onError: (String) -> Unit
 ) {
     val configString = """
-        [Interface]
-        PrivateKey = eI9MiyYWbOaDYf5fOT5P6JXBPscqGkis+L/nGyXIYGE=
-        Address = 10.66.66.2/32
-        DNS = 1.1.1.1
-        MTU = 1420
+       [Interface]
+            PrivateKey = eMTgL1HBd3TC/GHSOhCDFyPHlyA/4KjmftZNwAI9dVI=
+            Address = 10.66.66.2/32,fd42:42:42::2/128
+            DNS = 1.1.1.1,1.0.0.1
 
-        [Peer]
-        PublicKey = evSSRsdVYG3D4SI/ANbEj86R1hz3bgG+evzwBl+ce1A=
-        AllowedIPs = 0.0.0.0/0
-        Endpoint = 79.133.46.112:56258
-        PersistentKeepalive = 25
+            [Peer]
+            PublicKey = evSSRsdVYG3D4SI/ANbEj86R1hz3bgG+evzwBl+ce1A=
+            PresharedKey = 9LLvDv0QOQ52zDy+UGlr4dGPghLaTrGWCY6Wg7ZaCK0=
+            Endpoint = 79.133.46.112:56258
+            AllowedIPs = 0.0.0.0/0,::/0
     """.trimIndent()
 
     try {
