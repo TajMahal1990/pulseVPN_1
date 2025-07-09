@@ -1,38 +1,26 @@
 package com.example.myapplication
 
+
 import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import com.example.myapplication.ui.theme.MyApplicationTheme
-
-
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import com.wireguard.android.backend.Tunnel
-import com.wireguard.android.backend.GoBackend
-import com.wireguard.config.Config
 import com.example.myapplication.ui.theme.MyApplicationTheme
-import java.io.BufferedReader
-import java.io.StringReader
-
-
-import androidx.compose.ui.text.style.TextAlign
+import com.wireguard.android.backend.GoBackend
+import com.wireguard.android.backend.Tunnel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 
 class MainActivity : ComponentActivity() {
@@ -46,19 +34,30 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+
 @Composable
 fun VpnScreen() {
+    val context = LocalContext.current
+    val sharedPrefs = context.getSharedPreferences("vpn_prefs", Context.MODE_PRIVATE)
+    val vpnServers = listOf(
+        VpnServer("Germany", "🇩🇪", configGermany),
+        VpnServer("Singapore", "🇸🇬", configSingapore),
+        VpnServer("France", "🇫🇷", configFrance)
+    )
+
+    var selectedServer by remember { mutableStateOf(vpnServers[0]) }
     var isConnected by remember { mutableStateOf(false) }
     var vpnError by remember { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
+    var connectedTime by remember { mutableStateOf("00:00") }
+    val downloadSpeed = remember { mutableStateOf("0 KB/s") }
+    val uploadSpeed = remember { mutableStateOf("0 KB/s") }
+    val showPremiumDialog = remember { mutableStateOf(false) }
 
-    // Единственный Tunnel для включения и выключения
+    val backend = remember { GoBackend(context) }
     val tunnel = remember {
         object : Tunnel {
-            override fun getName() = "DemoTunnel"
-            override fun onStateChange(newState: Tunnel.State) {
-                // Можно логировать статусы или обновлять UI
-            }
+            override fun getName() = selectedServer.name
+            override fun onStateChange(newState: Tunnel.State) {}
         }
     }
 
@@ -66,120 +65,81 @@ fun VpnScreen() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            startVpn(context, tunnel,
-                onSuccess = {
-                    isConnected = true
-                    vpnError = null
-                },
-                onError = { err ->
-                    vpnError = "Ошибка: $err"
-                    isConnected = false
-                })
+            launchVpn(backend, tunnel, selectedServer.config, sharedPrefs, showPremiumDialog) {
+                isConnected = it
+                vpnError = if (it) null else "Ошибка при запуске VPN"
+            }
         } else {
             vpnError = "Разрешение на VPN отклонено"
-            isConnected = false
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Button(
-            onClick = {
-                if (!isConnected) {
+    LaunchedEffect(isConnected) {
+        if (isConnected) {
+            var lastRx = 0L
+            var lastTx = 0L
+            var seconds = 0
+
+            while (isConnected) {
+                try {
+                    // Вызов статистики на IO-потоке, а UI-обновления — на главном потоке
+                    val stats = withContext(Dispatchers.IO) {
+                        backend.getStatistics(tunnel)
+                    }
+                    val rx = stats?.totalRx() ?: 0L
+                    val tx = stats?.totalTx() ?: 0L
+                    downloadSpeed.value = formatSpeed(rx - lastRx)
+                    uploadSpeed.value = formatSpeed(tx - lastTx)
+                    lastRx = rx
+                    lastTx = tx
+                    connectedTime = formatDuration(seconds++)
+                } catch (e: Exception) {
+                    // Лучше хоть как-то логировать, иначе ошибку не найдешь!
+                    e.printStackTrace()
+                }
+                delay(1000)
+            }
+            connectedTime = "00:00"
+        }
+    }
+
+
+    VpnScreenUI(
+        selectedServer,
+        vpnServers,
+        isConnected,
+        connectedTime,
+        downloadSpeed,
+        uploadSpeed,
+        vpnError,
+        showPremiumDialog,
+        onServerSelected = { selectedServer = it },
+        onConnectClicked = {
+            val now = System.currentTimeMillis()
+            val trialEnd = sharedPrefs.getLong("trial_end", 0L)
+            if (!isConnected) {
+                if (now < trialEnd) {
+                    showPremiumDialog.value = true
+                } else {
                     val intent = GoBackend.VpnService.prepare(context)
                     if (intent != null) {
                         vpnPermissionLauncher.launch(intent)
                     } else {
-                        startVpn(context, tunnel,
-                            onSuccess = {
-                                isConnected = true
-                                vpnError = null
-                            },
-                            onError = { err ->
-                                vpnError = "Ошибка: $err"
-                                isConnected = false
-                            })
+                        launchVpn(
+                            backend,
+                            tunnel,
+                            selectedServer.config,
+                            sharedPrefs,
+                            showPremiumDialog
+                        ) {
+                            isConnected = it
+                            vpnError = if (it) null else "Ошибка при запуске VPN"
+                        }
                     }
-                } else {
-                    stopVpn(context, tunnel,
-                        onSuccess = {
-                            isConnected = false
-                            vpnError = null
-                        },
-                        onError = { err ->
-                            vpnError = "Ошибка при отключении: $err"
-                        })
                 }
-            },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-            )
-        ) {
-            Text(if (isConnected) "Выключить VPN" else "Включить VPN")
+            } else {
+                stopVpn(backend, tunnel, onSuccess = { isConnected = false }, onError = { vpnError = it })
+            }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        if (isConnected) {
-            Text("Статус: VPN активен ✅", color = MaterialTheme.colorScheme.primary)
-        } else {
-            Text("VPN неактивен", color = MaterialTheme.colorScheme.error)
-        }
-        vpnError?.let {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                it,
-                color = MaterialTheme.colorScheme.error,
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
-
-private fun startVpn(
-    context: android.content.Context,
-    tunnel: Tunnel,
-    onSuccess: () -> Unit,
-    onError: (String) -> Unit
-) {
-    val configString = """
-       [Interface]
-            PrivateKey = eMTgL1HBd3TC/GHSOhCDFyPHlyA/4KjmftZNwAI9dVI=
-            Address = 10.66.66.2/32,fd42:42:42::2/128
-            DNS = 1.1.1.1,1.0.0.1
-
-            [Peer]
-            PublicKey = evSSRsdVYG3D4SI/ANbEj86R1hz3bgG+evzwBl+ce1A=
-            PresharedKey = 9LLvDv0QOQ52zDy+UGlr4dGPghLaTrGWCY6Wg7ZaCK0=
-            Endpoint = 79.133.46.112:56258
-            AllowedIPs = 0.0.0.0/0,::/0
-    """.trimIndent()
-
-    try {
-        val config = Config.parse(BufferedReader(StringReader(configString)))
-        val backend = GoBackend(context)
-        backend.setState(tunnel, Tunnel.State.UP, config)
-        onSuccess()
-    } catch (e: Exception) {
-        onError(e.message ?: "неизвестно")
-    }
-}
-
-private fun stopVpn(
-    context: android.content.Context,
-    tunnel: Tunnel,
-    onSuccess: () -> Unit,
-    onError: (String) -> Unit
-) {
-    try {
-        val backend = GoBackend(context)
-        backend.setState(tunnel, Tunnel.State.DOWN, null)
-        onSuccess()
-    } catch (e: Exception) {
-        onError(e.message ?: "неизвестно")
-    }
+    )
 }
