@@ -22,6 +22,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
+// Получает Context (нужен для запуска VPN)
+//⟶ Создаёт список VPN-серверов с флагами и конфигами.
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -34,11 +37,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-
 @Composable
 fun VpnScreen() {
     val context = LocalContext.current
-    val sharedPrefs = context.getSharedPreferences("vpn_prefs", Context.MODE_PRIVATE)
     val vpnServers = listOf(
         VpnServer("Germany", "🇩🇪", configGermany),
         VpnServer("Singapore", "🇸🇬", configSingapore),
@@ -51,7 +52,6 @@ fun VpnScreen() {
     var connectedTime by remember { mutableStateOf("00:00") }
     val downloadSpeed = remember { mutableStateOf("0 KB/s") }
     val uploadSpeed = remember { mutableStateOf("0 KB/s") }
-    val showPremiumDialog = remember { mutableStateOf(false) }
 
     val backend = remember { GoBackend(context) }
     val tunnel = remember {
@@ -65,7 +65,7 @@ fun VpnScreen() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            launchVpn(backend, tunnel, selectedServer.config, sharedPrefs, showPremiumDialog) {
+            launchVpn(backend, tunnel, selectedServer.config) {
                 isConnected = it
                 vpnError = if (it) null else "Ошибка при запуске VPN"
             }
@@ -82,7 +82,6 @@ fun VpnScreen() {
 
             while (isConnected) {
                 try {
-                    // Вызов статистики на IO-потоке, а UI-обновления — на главном потоке
                     val stats = withContext(Dispatchers.IO) {
                         backend.getStatistics(tunnel)
                     }
@@ -94,7 +93,6 @@ fun VpnScreen() {
                     lastTx = tx
                     connectedTime = formatDuration(seconds++)
                 } catch (e: Exception) {
-                    // Лучше хоть как-то логировать, иначе ошибку не найдешь!
                     e.printStackTrace()
                 }
                 delay(1000)
@@ -103,42 +101,33 @@ fun VpnScreen() {
         }
     }
 
-
     VpnScreenUI(
-        selectedServer,
-        vpnServers,
-        isConnected,
-        connectedTime,
-        downloadSpeed,
-        uploadSpeed,
-        vpnError,
-        showPremiumDialog,
+        selectedServer = selectedServer,
+        vpnServers = vpnServers,
+        isConnected = isConnected,
+        connectedTime = connectedTime,
+        downloadSpeed = downloadSpeed,
+        uploadSpeed = uploadSpeed,
+        vpnError = vpnError,
         onServerSelected = { selectedServer = it },
         onConnectClicked = {
-            val now = System.currentTimeMillis()
-            val trialEnd = sharedPrefs.getLong("trial_end", 0L)
             if (!isConnected) {
-                if (now < trialEnd) {
-                    showPremiumDialog.value = true
+                val intent = GoBackend.VpnService.prepare(context)
+                if (intent != null) {
+                    vpnPermissionLauncher.launch(intent)
                 } else {
-                    val intent = GoBackend.VpnService.prepare(context)
-                    if (intent != null) {
-                        vpnPermissionLauncher.launch(intent)
-                    } else {
-                        launchVpn(
-                            backend,
-                            tunnel,
-                            selectedServer.config,
-                            sharedPrefs,
-                            showPremiumDialog
-                        ) {
-                            isConnected = it
-                            vpnError = if (it) null else "Ошибка при запуске VPN"
-                        }
+                    launchVpn(backend, tunnel, selectedServer.config) {
+                        isConnected = it
+                        vpnError = if (it) null else "Ошибка при запуске VPN"
                     }
                 }
             } else {
-                stopVpn(backend, tunnel, onSuccess = { isConnected = false }, onError = { vpnError = it })
+                stopVpn(
+                    backend,
+                    tunnel,
+                    onSuccess = { isConnected = false },
+                    onError = { vpnError = it }
+                )
             }
         }
     )

@@ -8,6 +8,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+//  экран интерфейса VPN, который позволяет выбрать сервер, подключиться или отключиться от VPN, а также отображает статус подключения, скорость трафика и ошибки. Он реагирует на действия пользователя и отображает соответствующую информацию.
+
 @Composable
 fun VpnScreenUI(
     selectedServer: VpnServer,
@@ -17,10 +19,8 @@ fun VpnScreenUI(
     downloadSpeed: State<String>,
     uploadSpeed: State<String>,
     vpnError: String?,
-    showPremiumDialog: MutableState<Boolean>,
     onServerSelected: (VpnServer) -> Unit,
-    onConnectClicked: () -> Unit,
-    trialEnd: Long? = null // Добавил для нормального отображения оставшегося времени триала
+    onConnectClicked: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -36,6 +36,7 @@ fun VpnScreenUI(
         Button(onClick = { expanded = true }) {
             Text("${selectedServer.flag} ${selectedServer.name}")
         }
+
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             vpnServers.forEach { server ->
                 DropdownMenuItem(
@@ -45,7 +46,6 @@ fun VpnScreenUI(
                     },
                     text = { Text("${server.flag} ${server.name}") }
                 )
-
             }
         }
 
@@ -61,7 +61,10 @@ fun VpnScreenUI(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("↓")
                 Text(downloadSpeed.value)
@@ -75,8 +78,9 @@ fun VpnScreenUI(
         Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = onConnectClicked,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            enabled = !showPremiumDialog.value // блокируем кнопку, пока открыт диалог
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
         ) {
             Text(if (isConnected) "Отключить VPN" else "Подключиться")
         }
@@ -85,34 +89,5 @@ fun VpnScreenUI(
             Spacer(modifier = Modifier.height(8.dp))
             Text(it, color = MaterialTheme.colorScheme.error)
         }
-    }
-
-    // --- Диалог триального лимита ---
-    if (showPremiumDialog.value) {
-        // Корректно считаем время до конца триала
-        val millisLeft = ((trialEnd ?: 0L) - System.currentTimeMillis()).coerceAtLeast(0L)
-        val hours = millisLeft / 3600000
-        val minutes = (millisLeft % 3600000) / 60000
-        val seconds = (millisLeft % 60000) / 1000 % 60
-        val timeLeft = String.format("%02d:%02d:%02d", hours, minutes, seconds)
-
-        AlertDialog(
-            onDismissRequest = { showPremiumDialog.value = false },
-            title = { Text("Бесплатный лимит исчерпан") },
-            text = { Text("Следующее подключение будет доступно через $timeLeft") },
-            confirmButton = {
-                Button(onClick = {
-                    showPremiumDialog.value = false
-                    // TODO: здесь можно обработать покупку премиума
-                }) {
-                    Text("Купить премиум")
-                }
-            },
-            dismissButton = {
-                Button(onClick = { showPremiumDialog.value = false }) {
-                    Text("Позже")
-                }
-            }
-        )
     }
 }

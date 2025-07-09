@@ -16,12 +16,11 @@ fun launchVpn(
     backend: GoBackend,
     tunnel: Tunnel,
     configString: String,
-    sharedPrefs: android.content.SharedPreferences,
-    showPremiumDialog: MutableState<Boolean>,
     onResult: (Boolean) -> Unit
-) {
+)
+ {
     CoroutineScope(Dispatchers.Main).launch {
-        delay(500) // ⏱ Дать системе время поднять VpnService
+        delay(100) // ⏱ Дать системе время поднять VpnService
 
         try {
             val config = withContext(Dispatchers.IO) {
@@ -34,14 +33,6 @@ fun launchVpn(
 
             onResult(true)
 
-            launch {
-                delay(100_000)
-                stopVpn(backend, tunnel, onSuccess = {
-                    onResult(false)
-                    sharedPrefs.edit().putLong("trial_end", System.currentTimeMillis() + 86_400_000).apply()
-                    showPremiumDialog.value = true
-                }, onError = { })
-            }
         } catch (e: Exception) {
             onResult(false)
         }
